@@ -75,11 +75,13 @@ client = Mastodon(
 me = client.account_verify_credentials()
 following = client.account_following(me.id)
 
-db = sqlite3.connect("toots.db")
-db.text_factory=str
-c = db.cursor()
-c.execute("CREATE TABLE IF NOT EXISTS `toots` (id INT NOT NULL UNIQUE PRIMARY KEY, userid INT NOT NULL, uri VARCHAR NOT NULL, content VARCHAR NOT NULL) WITHOUT ROWID")
-db.commit()
+def create_db(db_name):
+    db = sqlite3.connect(db_name)
+    db.text_factory=str
+    c = db.cursor()
+    c.execute("CREATE TABLE IF NOT EXISTS `toots` (id INT NOT NULL UNIQUE PRIMARY KEY, userid INT NOT NULL, uri VARCHAR NOT NULL, content VARCHAR NOT NULL) WITHOUT ROWID")
+    db.commit()
+    return db, c
 
 def handleCtrlC(signal, frame):
 	print("\nPREMATURE EVACUATION - Saving chunks")
@@ -88,17 +90,17 @@ def handleCtrlC(signal, frame):
 
 signal.signal(signal.SIGINT, handleCtrlC)
 
-for f in following:
-	last_toot = c.execute("SELECT id FROM `toots` WHERE userid LIKE ? ORDER BY id DESC LIMIT 1", (f.id,)).fetchone()
+def download_toots(tooter, c):
+	last_toot = c.execute("SELECT id FROM `toots` WHERE userid LIKE ? ORDER BY id DESC LIMIT 1", (tooter.id,)).fetchone()
 	if last_toot != None:
 		last_toot = last_toot[0]
 	else:
 		last_toot = 0
-	print("Harvesting toots for user @{}, starting from {}".format(f.acct, last_toot))
+	print("Harvesting toots for user @{}, starting from {}".format(tooter.acct, last_toot))
 
 	#find the user's activitypub outbox
 	print("WebFingering... (do not laugh at this. WebFinger is a federated protocol. https://wikipedia.org/wiki/WebFinger)")
-	instance = re.search(r"^.*@(.+)", f.acct)
+	instance = re.search(r"^.*@(.+)", tooter.acct)
 	if instance == None:
 		instance = re.search(r"https?:\/\/(.*)", cfg['site']).group(1)
 	else:
@@ -106,12 +108,12 @@ for f in following:
 
 	if instance in cfg['instance_blacklist']:
 		print("skipping blacklisted instance: {}".format(instance))
-		continue
+		return
 
 	try:
 		r = requests.get("https://{}/.well-known/host-meta".format(instance), timeout=10)
 		uri = re.search(r'template="([^"]+)"', r.text).group(1)
-		uri = uri.format(uri = "{}@{}".format(f.username, instance))
+		uri = uri.format(uri = "{}@{}".format(tooter.username, instance))
 		r = requests.get(uri, headers={"Accept": "application/json"}, timeout=10)
 		j = r.json()
 		for link in j['links']:
@@ -161,7 +163,7 @@ for f in following:
 					pid = re.search(r"[^\/]+$", oi['object']['id']).group(0)
 					c.execute("REPLACE INTO toots (id, userid, uri, content) VALUES (?, ?, ?, ?)", (
 						pid,
-						f.id,
+						tooter.id,
 						oi['object']['id'],
 						toot
 						)
@@ -176,14 +178,18 @@ for f in following:
 			j = r.json()
 			print('.', end='', flush=True)
 		print(" Done!")
-		db.commit()
 	except:
 		print("Encountered an error! Saving toots to database and moving to next followed account.")
+
+if __name__ == '__main__':
+	db, c = create_db("toots.db")
+	for f in following:
+		download_toots(f, c)
 		db.commit()
 
-print("Done!")
+	print("Done!")
 
-db.commit()
-db.execute("VACUUM") #compact db
-db.commit()
-db.close()
+	db.commit()
+	db.execute("VACUUM") #compact db
+	db.commit()
+	db.close()
