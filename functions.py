@@ -7,7 +7,7 @@ import markovify
 from bs4 import BeautifulSoup
 import re, multiprocessing, sqlite3, shutil, os, json
 
-def make_sentence(output):
+def make_sentence(output, user = None):
 	class nlt_fixed(markovify.NewlineText): #modified version of NewlineText that never rejects sentences
 		def test_sentence_input(self, sentence):
 			return True #all sentences are valid <3
@@ -16,7 +16,10 @@ def make_sentence(output):
 	db = sqlite3.connect("toots-copy.db")
 	db.text_factory=str
 	c = db.cursor()
-	toots = c.execute("SELECT content FROM `toots` ORDER BY RANDOM() LIMIT 10000").fetchall()
+	if user == None:
+		toots = c.execute("SELECT content FROM `toots` ORDER BY RANDOM() LIMIT 10000").fetchall()
+	else:
+		toots = c.execute("SELECT content FROM `toots` WHERE userid LIKE ? ORDER BY RANDOM() LIMIT 10000", (user,)).fetchall()
 	toots_str = ""
 	for toot in toots:
 		toots_str += "\n{}".format(toot[0])
@@ -36,15 +39,15 @@ def make_sentence(output):
 
 	output.send(sentence)
 
-def make_toot(force_markov = False, args = None):
-	return make_toot_markov()
+def make_toot(force_markov = False, args = None, user = None):
+	return make_toot_markov(user = user)
 
-def make_toot_markov(query = None):
+def make_toot_markov(query = None, user = None):
 	tries = 0
 	toot = None
 	while toot == None and tries < 10: #try to make a toot 10 times
 		pin, pout = multiprocessing.Pipe(False)
-		p = multiprocessing.Process(target = make_sentence, args = [pout])
+		p = multiprocessing.Process(target = make_sentence, args = [pout, user])
 		p.start()
 		p.join(10) #wait 10 seconds to get something
 		if p.is_alive(): #if it's still trying to make a toot after 10 seconds
